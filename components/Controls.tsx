@@ -1,7 +1,6 @@
-
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ShapeType, AppState, MediaItem } from '../types';
-import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle } from 'lucide-react';
+import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download } from 'lucide-react';
 import { generateThemeFromPrompt } from '../services/geminiService';
 import { generateVideoThumbnail } from '../utils/media';
 
@@ -16,8 +15,29 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   const [aiError, setAiError] = useState('');
   
+  // PWA Install State
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
 
   const handleShapeChange = (shape: ShapeType) => {
     setAppState(prev => ({ ...prev, shape }));
@@ -134,17 +154,29 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
           <p className="text-white/60 text-sm mt-1">Interactive 3D Generative Gallery</p>
         </div>
 
-        <button
-          onClick={toggleMode}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
-            appState.interactionMode === 'hand' 
-              ? 'bg-blue-500/20 border-blue-400 text-blue-100' 
-              : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-          }`}
-        >
-          {appState.interactionMode === 'hand' ? <Camera size={18} /> : <MousePointer2 size={18} />}
-          <span>{appState.interactionMode === 'hand' ? 'Camera Control' : 'Mouse Control'}</span>
-        </button>
+        <div className="flex flex-col gap-2 items-end">
+          <button
+            onClick={toggleMode}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
+              appState.interactionMode === 'hand' 
+                ? 'bg-blue-500/20 border-blue-400 text-blue-100' 
+                : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+            }`}
+          >
+            {appState.interactionMode === 'hand' ? <Camera size={18} /> : <MousePointer2 size={18} />}
+            <span>{appState.interactionMode === 'hand' ? 'Camera Control' : 'Mouse Control'}</span>
+          </button>
+
+          {installPrompt && (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border bg-purple-600/80 border-purple-400 text-white hover:bg-purple-600"
+            >
+              <Download size={18} />
+              <span>Install App</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Control Panel */}

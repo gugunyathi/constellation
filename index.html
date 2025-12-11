@@ -2,7 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#050505" />
+    <meta name="description" content="Turn your photo gallery into an immersive 3D interactive constellation." />
+    
+    <!-- PWA Settings -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
     <title>ZenParticles 3D</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -14,6 +24,7 @@
         overflow: hidden;
         background-color: #050505;
         font-family: 'Inter', sans-serif;
+        overscroll-behavior: none; /* Prevent pull-to-refresh on mobile */
       }
       /* Custom scrollbar for webkit */
       ::-webkit-scrollbar {
@@ -41,6 +52,19 @@
     "@react-three/fiber": "https://esm.sh/@react-three/fiber@^9.4.2"
   }
 }
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(registration => {
+          console.log('SW registered: ', registration);
+        })
+        .catch(registrationError => {
+          console.log('SW registration failed: ', registrationError);
+        });
+    });
+  }
 </script>
 </head>
   <body>
