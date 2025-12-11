@@ -1,0 +1,356 @@
+
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, Stars, Image as DreiImage, useCursor, useVideoTexture } from '@react-three/drei';
+import * as THREE from 'three';
+import { generateParticles } from '../utils/shapes';
+import { AppState, ShapeType, GestureData, MediaItem } from '../types';
+
+interface ParticleSystemProps {
+  appState: AppState;
+  handOpenness: React.MutableRefObject<number>;
+  gestureData: React.MutableRefObject<GestureData>;
+}
+
+interface GallerySystemProps extends ParticleSystemProps {
+  controlsRef: React.MutableRefObject<any>;
+}
+
+// ----------------------------------------------------------------------
+// VIDEO COMPONENT
+// ----------------------------------------------------------------------
+const VideoPlane = ({ url, opacity }: { url: string, opacity: number }) => {
+  const texture = useVideoTexture(url, {
+    muted: false,
+    loop: true,
+    start: true,
+    crossOrigin: "Anonymous",
+  });
+  
+  return (
+    <mesh>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial map={texture} side={THREE.DoubleSide} transparent opacity={opacity} />
+    </mesh>
+  );
+};
+
+// ----------------------------------------------------------------------
+// GALLERY SYSTEM (MEDIA ITEMS)
+// ----------------------------------------------------------------------
+const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, gestureData, controlsRef }) => {
+  const { galleryItems, shape, speed } = appState;
+  const [hovered, setHover] = useState<number | null>(null);
+  const [focused, setFocused] = useState<number | null>(null);
+  
+  const rotationRef = useRef(new THREE.Euler(0, 0, 0));
+  const velocityRef = useRef({ x: 0, y: 0 }); // Inertia
+  
+  const TARGET_GALLERY_COUNT = 200;
+
+  // Replicate items to fill the target count
+  const { displayItems, count } = useMemo(() => {
+    if (galleryItems.length === 0) return { displayItems: [], count: 0 };
+    const totalCount = Math.max(galleryItems.length, TARGET_GALLERY_COUNT);
+    const items = [];
+    for (let i = 0; i < totalCount; i++) {
+      items.push(galleryItems[i % galleryItems.length]);
+    }
+    return { displayItems: items, count: totalCount };
+  }, [galleryItems]);
+
+  useCursor(hovered !== null);
+
+  // Generate base positions
+  const basePositions = useMemo(() => {
+    return generateParticles(shape, count);
+  }, [count, shape]);
+
+  // Store refs to the meshes
+  const meshRefs = useRef<(THREE.Mesh | THREE.Group | null)[]>([]);
+
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.enabled = focused === null;
+    }
+  }, [focused, controlsRef]);
+
+  useFrame((state, delta) => {
+    // 1. Gesture & Physics
+    const { velocity, pinchDistance, rotation: gestureRot, isPinching } = gestureData.current;
+    
+    // Apply inertia from gesture velocity
+    if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
+       velocityRef.current.x += velocity.x * 0.02;
+       velocityRef.current.y += velocity.y * 0.02;
+    }
+    
+    // Decay inertia
+    velocityRef.current.x *= 0.95;
+    velocityRef.current.y *= 0.95;
+
+    // Apply rotation
+    rotationRef.current.y += (speed * 0.1 + velocityRef.current.x * 2.5) * delta;
+    rotationRef.current.x += (velocityRef.current.y * 2.5) * delta;
+    
+    // Add gesture tilt
+    const currentTilt = rotationRef.current.z;
+    rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+
+    // Expansion logic
+    const openVal = handOpenness.current;
+    const baseExpansion = 0.5 + (openVal * 2.0);
+    
+    // Pinch gravity (attraction)
+    const gravity = isPinching ? (1.0 - pinchDistance) * 3 : 0; 
+    const finalExpansion = Math.max(0.1, baseExpansion - gravity);
+
+    // 2. Animate Items
+    for (let i = 0; i < count; i++) {
+      const mesh = meshRefs.current[i];
+      if (!mesh) continue;
+
+      const bx = basePositions[i * 3];
+      const by = basePositions[i * 3 + 1];
+      const bz = basePositions[i * 3 + 2];
+
+      const ex = bx * finalExpansion;
+      const ey = by * finalExpansion;
+      const ez = bz * finalExpansion;
+
+      // Apply Global Rotation Matrix
+      const euler = rotationRef.current;
+      const pos = new THREE.Vector3(ex, ey, ez);
+      pos.applyEuler(euler);
+
+      // Target Logic
+      const isFocused = focused === i;
+      const targetPos = new THREE.Vector3();
+      const targetScale = new THREE.Vector3();
+      const targetQuat = new THREE.Quaternion();
+
+      if (isFocused) {
+        const camDir = new THREE.Vector3();
+        state.camera.getWorldDirection(camDir);
+        
+        targetPos.copy(state.camera.position).add(camDir.multiplyScalar(4));
+        targetScale.set(4, 4, 4); // Uniform scale for group, child maintains aspect ratio
+        targetQuat.copy(state.camera.quaternion);
+        
+        // Mouse tilt parallax
+        const mouseX = state.pointer.x;
+        const mouseY = state.pointer.y;
+        const tiltQ = new THREE.Quaternion();
+        tiltQ.setFromEuler(new THREE.Euler(mouseY * 0.3, -mouseX * 0.3, 0));
+        targetQuat.multiply(tiltQ);
+      } else {
+        targetPos.copy(pos);
+        // Slightly zoom on hover (1.2x)
+        const s = hovered === i ? 1.2 : 1.0;
+        targetScale.set(s, s, s);
+        
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(targetPos);
+        dummy.lookAt(0, 0, 0); 
+        targetQuat.copy(dummy.quaternion);
+      }
+
+      const lerpSpeed = isFocused ? 0.1 : 0.05;
+      mesh.position.lerp(targetPos, lerpSpeed);
+      mesh.scale.lerp(targetScale, lerpSpeed);
+      mesh.quaternion.slerp(targetQuat, lerpSpeed);
+      
+      // Opacity handling
+      mesh.traverse((child) => {
+         if ((child as THREE.Mesh).isMesh) {
+            const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+            if (mat) {
+               const targetOpacity = (focused !== null && !isFocused) ? 0.05 : 1.0;
+               mat.opacity = THREE.MathUtils.lerp(mat.opacity, targetOpacity, 0.1);
+               mat.transparent = true;
+            }
+         }
+      });
+    }
+  });
+
+  const handleClick = (index: number, e: any) => {
+    e.stopPropagation();
+    setFocused(focused === index ? null : index);
+  };
+
+  return (
+    <group onClick={(e) => { e.stopPropagation(); setFocused(null); }}> 
+      {displayItems.map((item, i) => {
+         const isFocused = focused === i;
+         const isVideo = item.type === 'video';
+         
+         // If we are focused on a video, we render the video player
+         // Otherwise we render the image (thumbnail or actual image)
+         const content = (isVideo && isFocused) 
+            ? <VideoPlane url={item.url} opacity={1} />
+            : <DreiImage
+                url={isVideo && item.thumbnail ? item.thumbnail : item.url}
+                transparent
+                side={THREE.DoubleSide}
+                opacity={1} // Managed by useFrame
+              />;
+
+         return (
+           <group 
+             key={`item-${i}-${item.id}`} 
+             ref={(el) => (meshRefs.current[i] = el)}
+             onClick={(e) => handleClick(i, e)}
+             onPointerOver={(e) => { e.stopPropagation(); setHover(i); }}
+             onPointerOut={(e) => setHover(null)}
+           >
+              {content}
+           </group>
+         );
+      })}
+    </group>
+  );
+};
+
+// ----------------------------------------------------------------------
+// PARTICLE SYSTEM (POINTS)
+// ----------------------------------------------------------------------
+const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData }) => {
+  const pointsRef = useRef<THREE.Points>(null);
+  const { shape, particleCount, color, secondaryColor, speed } = appState;
+
+  const targetPositions = useMemo(() => generateParticles(shape, particleCount), [shape, particleCount]);
+  const currentPositions = useMemo(() => new Float32Array(particleCount * 3), [particleCount]);
+
+  const colors = useMemo(() => {
+    const arr = new Float32Array(particleCount * 3);
+    const c1 = new THREE.Color(color);
+    const c2 = new THREE.Color(secondaryColor);
+    for (let i = 0; i < particleCount; i++) {
+      const mixed = c1.clone().lerp(c2, Math.random());
+      arr[i * 3] = mixed.r;
+      arr[i * 3 + 1] = mixed.g;
+      arr[i * 3 + 2] = mixed.b;
+    }
+    return arr;
+  }, [particleCount, color, secondaryColor]);
+
+  const rotationRef = useRef(new THREE.Euler(0, 0, 0));
+  const velocityRef = useRef({ x: 0, y: 0 });
+
+  useFrame((state, delta) => {
+    if (!pointsRef.current) return;
+
+    // Gesture Physics
+    const { velocity, pinchDistance, rotation: gestureRot, isPinching } = gestureData.current;
+    
+    // Reduced multipliers
+    if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
+       velocityRef.current.x += velocity.x * 0.02;
+       velocityRef.current.y += velocity.y * 0.02;
+    }
+    velocityRef.current.x *= 0.95;
+    velocityRef.current.y *= 0.95;
+
+    rotationRef.current.y += (delta * 0.1 * speed) + (velocityRef.current.x * 2.5 * delta);
+    rotationRef.current.x += (velocityRef.current.y * 2.5) * delta;
+    
+    const currentTilt = rotationRef.current.z;
+    rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+
+    pointsRef.current.rotation.copy(rotationRef.current);
+
+    // Particle Animation
+    const openVal = handOpenness.current;
+    const smoothTime = 2.0 * delta; 
+    const baseExpansion = 0.2 + (openVal * 2.8);
+    const gravity = isPinching ? (1.0 - pinchDistance) * 5 : 0;
+    const finalExpansion = Math.max(0.01, baseExpansion - gravity);
+    
+    const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
+
+    for (let i = 0; i < particleCount; i++) {
+      const i3 = i * 3;
+      const tx = targetPositions[i3];
+      const ty = targetPositions[i3 + 1];
+      const tz = targetPositions[i3 + 2];
+
+      let cx = positions[i3];
+      let cy = positions[i3 + 1];
+      let cz = positions[i3 + 2];
+
+      const targetX = tx * finalExpansion;
+      const targetY = ty * finalExpansion;
+      const targetZ = tz * finalExpansion;
+
+      const time = state.clock.elapsedTime * speed;
+      const noise = Math.sin(time + i) * 0.1 * finalExpansion;
+
+      cx += (targetX + noise - cx) * smoothTime;
+      cy += (targetY + noise - cy) * smoothTime;
+      cz += (targetZ + noise - cz) * smoothTime;
+
+      positions[i3] = cx;
+      positions[i3 + 1] = cy;
+      positions[i3 + 2] = cz;
+    }
+
+    pointsRef.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={pointsRef} key={particleCount}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={particleCount} array={currentPositions} itemSize={3} />
+        <bufferAttribute attach="attributes-color" count={particleCount} array={colors} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial size={0.15} vertexColors transparent opacity={0.8} sizeAttenuation blending={THREE.AdditiveBlending} depthWrite={false} />
+    </points>
+  );
+};
+
+// ----------------------------------------------------------------------
+// MAIN SCENE
+// ----------------------------------------------------------------------
+const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData }) => {
+  const controlsRef = useRef<any>(null);
+  
+  const hasItems = appState.galleryItems.length > 0;
+  const showImages = hasItems && (appState.renderMode === 'images' || appState.renderMode === 'mixed');
+  const showParticles = appState.renderMode === 'particles' || appState.renderMode === 'mixed';
+
+  return (
+    <div className="w-full h-full">
+      <Canvas camera={{ position: [0, 0, 15], fov: 60 }} dpr={[1, 2]}>
+        <color attach="background" args={['#050505']} />
+        <ambientLight intensity={0.5} />
+        <pointLight position={[10, 10, 10]} intensity={1} />
+        <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+
+        {showImages && (
+          <GallerySystem 
+            appState={appState} 
+            handOpenness={handOpenness} 
+            gestureData={gestureData}
+            controlsRef={controlsRef} 
+          />
+        )}
+        
+        {showParticles && (
+          <ParticleSystem appState={appState} handOpenness={handOpenness} gestureData={gestureData} />
+        )}
+
+        <OrbitControls 
+          ref={controlsRef}
+          enablePan={false} 
+          enableZoom={true} 
+          maxDistance={40}
+          minDistance={2}
+          autoRotate={false} 
+        />
+      </Canvas>
+    </div>
+  );
+};
+
+export default ParticleScene;

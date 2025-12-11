@@ -1,0 +1,301 @@
+
+import React, { useState, useRef } from 'react';
+import { ShapeType, AppState, MediaItem } from '../types';
+import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle } from 'lucide-react';
+import { generateThemeFromPrompt } from '../services/geminiService';
+import { generateVideoThumbnail } from '../utils/media';
+
+interface ControlsProps {
+  appState: AppState;
+  setAppState: React.Dispatch<React.SetStateAction<AppState>>;
+}
+
+const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
+  const [prompt, setPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  const [aiError, setAiError] = useState('');
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const handleShapeChange = (shape: ShapeType) => {
+    setAppState(prev => ({ ...prev, shape }));
+  };
+
+  const toggleMode = () => {
+    setAppState(prev => ({
+      ...prev,
+      interactionMode: prev.interactionMode === 'mouse' ? 'hand' : 'mouse'
+    }));
+  };
+
+  const cycleRenderMode = () => {
+    setAppState(prev => {
+        if (prev.renderMode === 'particles') return { ...prev, renderMode: 'images' };
+        if (prev.renderMode === 'images') return { ...prev, renderMode: 'mixed' };
+        return { ...prev, renderMode: 'particles' };
+    });
+  };
+
+  const getRenderModeLabel = () => {
+      switch(appState.renderMode) {
+          case 'images': return 'Gallery Only';
+          case 'mixed': return 'Mixed Mode';
+          default: return 'Particles Only';
+      }
+  };
+
+  const getRenderModeIcon = () => {
+      switch(appState.renderMode) {
+          case 'images': return <Images size={12}/>;
+          case 'mixed': return <Layers size={12}/>;
+          default: return <Grid3X3 size={12}/>;
+      }
+  };
+
+  const processFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    setIsProcessingMedia(true);
+    const newItems: MediaItem[] = [];
+    const MAX_FILES = 200; // Limit to prevent browser crash
+    
+    // Convert to array and slice
+    const fileArray = Array.from(files).slice(0, MAX_FILES);
+
+    // Process in chunks to update UI? For now, just linear async
+    for (const file of fileArray) {
+      const isImage = file.type.startsWith('image/');
+      const isVideo = file.type.startsWith('video/');
+
+      if (isImage || isVideo) {
+        const url = URL.createObjectURL(file);
+        let thumbnail = undefined;
+
+        if (isVideo) {
+          try {
+            thumbnail = await generateVideoThumbnail(file);
+          } catch (e) {
+            console.warn("Failed to generate thumb for", file.name);
+          }
+        }
+
+        newItems.push({
+          id: `${file.name}-${Date.now()}-${Math.random()}`,
+          url,
+          type: isVideo ? 'video' : 'image',
+          thumbnail,
+          file
+        });
+      }
+    }
+
+    setAppState(prev => ({
+      ...prev,
+      galleryItems: [...prev.galleryItems, ...newItems],
+      renderMode: 'mixed', // Switch automatically
+      shape: ShapeType.GALLERY
+    }));
+    
+    setIsProcessingMedia(false);
+  };
+
+  const handleAiGenerate = async () => {
+    if (!prompt.trim()) return;
+    
+    setIsGenerating(true);
+    setAiError('');
+    
+    try {
+      const theme = await generateThemeFromPrompt(prompt);
+      setAppState(prev => ({
+        ...prev,
+        shape: theme.shape,
+        color: theme.primaryColor,
+        secondaryColor: theme.secondaryColor,
+        particleCount: Math.min(Math.max(theme.particleCount, 1000), 10000), // Clamp
+        speed: theme.speed
+      }));
+    } catch (e) {
+      setAiError('Failed to generate theme.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col justify-between p-6">
+      
+      {/* Top Bar */}
+      <div className="pointer-events-auto flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-white tracking-tighter drop-shadow-lg">Zen<span className="text-blue-400">Particles</span></h1>
+          <p className="text-white/60 text-sm mt-1">Interactive 3D Generative Gallery</p>
+        </div>
+
+        <button
+          onClick={toggleMode}
+          className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
+            appState.interactionMode === 'hand' 
+              ? 'bg-blue-500/20 border-blue-400 text-blue-100' 
+              : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+          }`}
+        >
+          {appState.interactionMode === 'hand' ? <Camera size={18} /> : <MousePointer2 size={18} />}
+          <span>{appState.interactionMode === 'hand' ? 'Camera Control' : 'Mouse Control'}</span>
+        </button>
+      </div>
+
+      {/* Control Panel */}
+      <div className="pointer-events-auto w-full max-w-sm bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-5 text-white shadow-2xl space-y-6 max-h-[80vh] overflow-y-auto">
+        
+        {/* Shape Selector */}
+        <div>
+          <label className="text-xs uppercase tracking-wider text-white/50 font-semibold mb-3 block">Templates</label>
+          <div className="grid grid-cols-4 gap-2">
+            {Object.values(ShapeType).map((s) => (
+              <button
+                key={s}
+                onClick={() => handleShapeChange(s)}
+                className={`p-2 text-xs rounded-lg transition-all border ${
+                  appState.shape === s
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]'
+                    : 'bg-white/5 border-transparent hover:bg-white/10 text-white/70'
+                }`}
+              >
+                {s === ShapeType.GALLERY ? 'Cloud' : s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Gallery Upload */}
+        <div>
+           <div className="flex items-center justify-between mb-3">
+             <label className="text-xs uppercase tracking-wider text-white/50 font-semibold flex items-center gap-2">
+               <ImagePlus size={14}/> Media Gallery
+             </label>
+             
+             {appState.galleryItems.length > 0 && (
+                <button 
+                  onClick={cycleRenderMode}
+                  className="flex items-center gap-1 text-[10px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded border border-white/20 transition-colors min-w-[100px] justify-center"
+                >
+                    {getRenderModeIcon()}
+                    {getRenderModeLabel()}
+                </button>
+             )}
+           </div>
+
+           <div className="flex gap-2">
+             <button 
+               onClick={() => folderInputRef.current?.click()}
+               disabled={isProcessingMedia}
+               className="flex-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-400/30 rounded-lg p-3 text-sm text-blue-100 flex items-center justify-center gap-2 transition-colors"
+             >
+               {isProcessingMedia ? <Loader2 size={16} className="animate-spin"/> : <FolderOpen size={16} />}
+               Connect Gallery
+             </button>
+             <button 
+               onClick={() => fileInputRef.current?.click()}
+               disabled={isProcessingMedia}
+               className="bg-white/5 hover:bg-white/10 border border-white/20 rounded-lg p-3 text-white/70 flex items-center justify-center transition-colors"
+               title="Upload specific files"
+             >
+               <Upload size={16} />
+             </button>
+           </div>
+           
+           {/* Inputs */}
+           <input 
+             ref={fileInputRef}
+             type="file" 
+             multiple 
+             accept="image/*,video/*"
+             className="hidden" 
+             onChange={(e) => processFiles(e.target.files)}
+           />
+           <input 
+             ref={folderInputRef}
+             type="file"
+             // @ts-ignore - webkitdirectory is a non-standard attribute but standard in browsers
+             webkitdirectory=""
+             directory=""
+             multiple
+             className="hidden"
+             onChange={(e) => processFiles(e.target.files)}
+           />
+
+           {appState.galleryItems.length > 0 && (
+             <div className="mt-2 text-xs text-green-400 flex items-center gap-1">
+               <span>{appState.galleryItems.length} items loaded</span>
+               {appState.galleryItems.some(i => i.type === 'video') && (
+                 <span className="text-white/40 ml-1 flex items-center gap-0.5">• <PlayCircle size={10}/> Video support active</span>
+               )}
+             </div>
+           )}
+           {(appState.renderMode === 'images' || appState.renderMode === 'mixed') && appState.galleryItems.length > 0 && (
+             <div className="mt-2 p-2 bg-blue-500/20 border border-blue-500/30 rounded text-xs text-blue-200 flex items-start gap-2">
+               <MousePointerClick size={14} className="mt-0.5 shrink-0" />
+               <span>Click items to inspect. Videos play when clicked.</span>
+             </div>
+           )}
+        </div>
+
+        {/* Colors */}
+        <div>
+          <label className="text-xs uppercase tracking-wider text-white/50 font-semibold mb-3 flex items-center gap-2">
+            <Palette size={14}/> Colors
+          </label>
+          <div className="flex gap-4">
+             <div className="flex-1">
+                <input 
+                  type="color" 
+                  value={appState.color}
+                  onChange={(e) => setAppState(prev => ({...prev, color: e.target.value}))}
+                  className="w-full h-10 rounded-lg cursor-pointer bg-transparent border border-white/20"
+                />
+             </div>
+             <div className="flex-1">
+                <input 
+                  type="color" 
+                  value={appState.secondaryColor}
+                  onChange={(e) => setAppState(prev => ({...prev, secondaryColor: e.target.value}))}
+                  className="w-full h-10 rounded-lg cursor-pointer bg-transparent border border-white/20"
+                />
+             </div>
+          </div>
+        </div>
+
+        {/* AI Generator */}
+        <div className="border-t border-white/10 pt-4">
+          <label className="text-xs uppercase tracking-wider text-purple-300/80 font-semibold mb-2 flex items-center gap-2">
+            <Sparkles size={14} className="text-purple-400"/> AI Theme Generator
+          </label>
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              placeholder="e.g. 'Cyberpunk forest', 'Sad rain'"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAiGenerate()}
+              className="flex-1 bg-black/50 border border-white/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500 transition-colors"
+            />
+            <button 
+              onClick={handleAiGenerate}
+              disabled={isGenerating || !prompt}
+              className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 rounded-lg transition-colors"
+            >
+              {isGenerating ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+            </button>
+          </div>
+          {aiError && <p className="text-red-400 text-xs mt-2">{aiError}</p>}
+        </div>
+
+      </div>
+    </div>
+  );
+};
+
+export default Controls;

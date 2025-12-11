@@ -1,0 +1,7 @@
+{
+  "name": "Constellation",
+  "description": "Interactive 3D particle system controlled by hand gestures, featuring AI-generated themes.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
