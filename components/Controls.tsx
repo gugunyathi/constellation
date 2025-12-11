@@ -1,6 +1,7 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ShapeType, AppState, MediaItem } from '../types';
-import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download } from 'lucide-react';
+import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download, Music, Mic2, SkipBack, SkipForward, Play, Pause, Volume2, VolumeX, Hand, Activity } from 'lucide-react';
 import { generateThemeFromPrompt } from '../services/geminiService';
 import { generateVideoThumbnail } from '../utils/media';
 
@@ -20,6 +21,7 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handler = (e: any) => {
@@ -47,6 +49,13 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
     setAppState(prev => ({
       ...prev,
       interactionMode: prev.interactionMode === 'mouse' ? 'hand' : 'mouse'
+    }));
+  };
+
+  const toggleControlMode = () => {
+    setAppState(prev => ({
+        ...prev,
+        controlMode: prev.controlMode === 'particles' ? 'music' : 'particles'
     }));
   };
 
@@ -79,12 +88,10 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
 
     setIsProcessingMedia(true);
     const newItems: MediaItem[] = [];
-    const MAX_FILES = 200; // Limit to prevent browser crash
+    const MAX_FILES = 200; 
     
-    // Convert to array and slice
     const fileArray = Array.from(files).slice(0, MAX_FILES);
 
-    // Process in chunks to update UI? For now, just linear async
     for (const file of fileArray) {
       const isImage = file.type.startsWith('image/');
       const isVideo = file.type.startsWith('video/');
@@ -106,7 +113,8 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
           url,
           type: isVideo ? 'video' : 'image',
           thumbnail,
-          file
+          file,
+          name: file.name
         });
       }
     }
@@ -114,11 +122,34 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
     setAppState(prev => ({
       ...prev,
       galleryItems: [...prev.galleryItems, ...newItems],
-      renderMode: 'mixed', // Switch automatically
+      renderMode: 'mixed', 
       shape: ShapeType.GALLERY
     }));
     
     setIsProcessingMedia(false);
+  };
+
+  const processAudioFiles = (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      const newTracks: MediaItem[] = [];
+      Array.from(files).forEach(file => {
+          if (file.type.startsWith('audio/')) {
+              newTracks.push({
+                  id: `audio-${Date.now()}-${Math.random()}`,
+                  url: URL.createObjectURL(file),
+                  type: 'audio',
+                  file,
+                  name: file.name.replace(/\.[^/.]+$/, "") // Remove extension
+              });
+          }
+      });
+
+      setAppState(prev => ({
+          ...prev,
+          audioTracks: [...prev.audioTracks, ...newTracks],
+          isPlaying: true, // Auto play on upload
+          currentTrackIndex: prev.audioTracks.length // Start playing the first new track
+      }));
   };
 
   const handleAiGenerate = async () => {
@@ -144,6 +175,8 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
     }
   };
 
+  const currentTrack = appState.audioTracks[appState.currentTrackIndex];
+
   return (
     <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col justify-between p-6">
       
@@ -155,17 +188,34 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
         </div>
 
         <div className="flex flex-col gap-2 items-end">
-          <button
-            onClick={toggleMode}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
-              appState.interactionMode === 'hand' 
-                ? 'bg-blue-500/20 border-blue-400 text-blue-100' 
-                : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
-            }`}
-          >
-            {appState.interactionMode === 'hand' ? <Camera size={18} /> : <MousePointer2 size={18} />}
-            <span>{appState.interactionMode === 'hand' ? 'Camera Control' : 'Mouse Control'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Control Mode Switcher */}
+            {appState.interactionMode === 'hand' && (
+                <button
+                onClick={toggleControlMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
+                    appState.controlMode === 'music' 
+                    ? 'bg-green-500/20 border-green-400 text-green-100' 
+                    : 'bg-blue-500/20 border-blue-400 text-blue-100'
+                }`}
+                >
+                {appState.controlMode === 'music' ? <Music size={18} /> : <Hand size={18} />}
+                <span>{appState.controlMode === 'music' ? 'Music Gestures' : 'Particle Gestures'}</span>
+                </button>
+            )}
+
+            <button
+                onClick={toggleMode}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full backdrop-blur-md transition-all border ${
+                appState.interactionMode === 'hand' 
+                    ? 'bg-blue-500/20 border-blue-400 text-blue-100' 
+                    : 'bg-white/10 border-white/20 text-white hover:bg-white/20'
+                }`}
+            >
+                {appState.interactionMode === 'hand' ? <Camera size={18} /> : <MousePointer2 size={18} />}
+                <span>{appState.interactionMode === 'hand' ? 'Camera On' : 'Mouse On'}</span>
+            </button>
+          </div>
 
           {installPrompt && (
             <button
@@ -202,8 +252,107 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
           </div>
         </div>
 
+        {/* Music Player Section */}
+        <div className="border-t border-white/10 pt-4">
+             <div className="flex items-center justify-between mb-3">
+                 <label className="text-xs uppercase tracking-wider text-green-300/80 font-semibold flex items-center gap-2">
+                   <Music size={14}/> Music Player
+                 </label>
+                 <button 
+                   onClick={() => audioInputRef.current?.click()}
+                   className="text-[10px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded border border-white/20 transition-colors"
+                 >
+                   + Add Songs
+                 </button>
+                 <input 
+                   ref={audioInputRef} 
+                   type="file" 
+                   accept="audio/*" 
+                   multiple 
+                   className="hidden" 
+                   onChange={(e) => processAudioFiles(e.target.files)}
+                 />
+             </div>
+
+             {appState.audioTracks.length === 0 ? (
+                 <div className="text-center p-4 border border-dashed border-white/10 rounded-lg text-white/30 text-xs">
+                     No music loaded. Add audio files to play.
+                 </div>
+             ) : (
+                 <div className="bg-black/30 rounded-lg p-3 space-y-3">
+                    {/* Track Info */}
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-blue-600 rounded flex items-center justify-center relative overflow-hidden">
+                            <Mic2 size={20} className="text-white/80 z-10" />
+                            {appState.isVisualizerActive && appState.isPlaying && (
+                                <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                            )}
+                        </div>
+                        <div className="overflow-hidden flex-1">
+                            <h3 className="text-sm font-medium truncate">{currentTrack?.name || 'Unknown Track'}</h3>
+                            <p className="text-xs text-white/50">{appState.currentTrackIndex + 1} of {appState.audioTracks.length}</p>
+                        </div>
+                        
+                        <button
+                           onClick={() => setAppState(prev => ({...prev, isVisualizerActive: !prev.isVisualizerActive}))}
+                           title="Toggle Visualizer"
+                           className={`p-2 rounded-full transition-all ${
+                               appState.isVisualizerActive 
+                               ? 'bg-pink-500 text-white shadow-[0_0_10px_rgba(236,72,153,0.5)]' 
+                               : 'bg-white/5 text-white/30 hover:bg-white/10'
+                           }`}
+                        >
+                            <Activity size={16} />
+                        </button>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="flex items-center justify-between">
+                        <button 
+                          onClick={() => setAppState(prev => ({...prev, currentTrackIndex: (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length}))}
+                          className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                        >
+                            <SkipBack size={18} />
+                        </button>
+                        <button 
+                           onClick={() => setAppState(prev => ({...prev, isPlaying: !prev.isPlaying}))}
+                           className="p-3 bg-white text-black rounded-full hover:scale-105 transition-transform"
+                        >
+                            {appState.isPlaying ? <Pause size={20} fill="black" /> : <Play size={20} fill="black" className="ml-0.5"/>}
+                        </button>
+                        <button 
+                          onClick={() => setAppState(prev => ({...prev, currentTrackIndex: (prev.currentTrackIndex + 1) % prev.audioTracks.length}))}
+                          className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                        >
+                            <SkipForward size={18} />
+                        </button>
+                    </div>
+
+                    {/* Volume */}
+                    <div className="flex items-center gap-2">
+                        {appState.volume === 0 ? <VolumeX size={14} className="text-white/50"/> : <Volume2 size={14} className="text-white/50"/>}
+                        <input 
+                           type="range" 
+                           min="0" 
+                           max="1" 
+                           step="0.05" 
+                           value={appState.volume}
+                           onChange={(e) => setAppState(prev => ({...prev, volume: parseFloat(e.target.value)}))}
+                           className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                        />
+                    </div>
+                 </div>
+             )}
+             
+             {appState.controlMode === 'music' && (
+                 <div className="mt-2 text-[10px] text-green-400/80 bg-green-900/20 p-2 rounded border border-green-500/20">
+                     Gestures Active: Swipe Up/Down (Vol), Swipe Side (Skip), Pinch (Pause)
+                 </div>
+             )}
+        </div>
+
         {/* Gallery Upload */}
-        <div>
+        <div className="border-t border-white/10 pt-4">
            <div className="flex items-center justify-between mb-3">
              <label className="text-xs uppercase tracking-wider text-white/50 font-semibold flex items-center gap-2">
                <ImagePlus size={14}/> Media Gallery
@@ -267,16 +416,10 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
                )}
              </div>
            )}
-           {(appState.renderMode === 'images' || appState.renderMode === 'mixed') && appState.galleryItems.length > 0 && (
-             <div className="mt-2 p-2 bg-blue-500/20 border border-blue-500/30 rounded text-xs text-blue-200 flex items-start gap-2">
-               <MousePointerClick size={14} className="mt-0.5 shrink-0" />
-               <span>Click items to inspect. Videos play when clicked.</span>
-             </div>
-           )}
         </div>
 
         {/* Colors */}
-        <div>
+        <div className="border-t border-white/10 pt-4">
           <label className="text-xs uppercase tracking-wider text-white/50 font-semibold mb-3 flex items-center gap-2">
             <Palette size={14}/> Colors
           </label>

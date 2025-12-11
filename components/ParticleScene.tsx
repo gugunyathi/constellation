@@ -10,6 +10,7 @@ interface ParticleSystemProps {
   appState: AppState;
   handOpenness: React.MutableRefObject<number>;
   gestureData: React.MutableRefObject<GestureData>;
+  analyserRef: React.MutableRefObject<AnalyserNode | null>;
 }
 
 interface GallerySystemProps extends ParticleSystemProps {
@@ -38,13 +39,16 @@ const VideoPlane = ({ url, opacity }: { url: string, opacity: number }) => {
 // ----------------------------------------------------------------------
 // GALLERY SYSTEM (MEDIA ITEMS)
 // ----------------------------------------------------------------------
-const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, gestureData, controlsRef }) => {
-  const { galleryItems, shape, speed } = appState;
+const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, gestureData, controlsRef, analyserRef }) => {
+  const { galleryItems, shape, speed, controlMode, isVisualizerActive } = appState;
   const [hovered, setHover] = useState<number | null>(null);
   const [focused, setFocused] = useState<number | null>(null);
   
   const rotationRef = useRef(new THREE.Euler(0, 0, 0));
   const velocityRef = useRef({ x: 0, y: 0 }); // Inertia
+  
+  // Audio Visualizer Data Storage
+  const frequencyData = useRef(new Uint8Array(0));
   
   const TARGET_GALLERY_COUNT = 200;
 
@@ -76,13 +80,41 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
   }, [focused, controlsRef]);
 
   useFrame((state, delta) => {
+    // 0. Audio Visualizer Setup
+    let audioBass = 0;
+    let audioMid = 0;
+    
+    if (isVisualizerActive && analyserRef.current) {
+        const analyser = analyserRef.current;
+        if (frequencyData.current.length !== analyser.frequencyBinCount) {
+             frequencyData.current = new Uint8Array(analyser.frequencyBinCount);
+        }
+        analyser.getByteFrequencyData(frequencyData.current);
+        
+        // Calculate basic bands (FFT size 256 -> 128 bins)
+        // Bass: ~0-10 bins
+        let bassSum = 0;
+        for(let i=0; i<10; i++) bassSum += frequencyData.current[i];
+        audioBass = (bassSum / 10) / 255; // 0.0 - 1.0
+
+        // Mid/High
+        let midSum = 0;
+        for(let i=10; i<50; i++) midSum += frequencyData.current[i];
+        audioMid = (midSum / 40) / 255; 
+    }
+
     // 1. Gesture & Physics
+    // If controlMode is music, we ignore gesture inputs for physics to prevent spinning while changing volume
+    const isPhysicsActive = controlMode === 'particles';
+    
     const { velocity, pinchDistance, rotation: gestureRot, isPinching } = gestureData.current;
     
-    // Apply inertia from gesture velocity
-    if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
-       velocityRef.current.x += velocity.x * 0.02;
-       velocityRef.current.y += velocity.y * 0.02;
+    if (isPhysicsActive) {
+        // Apply inertia from gesture velocity
+        if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
+           velocityRef.current.x += velocity.x * 0.02;
+           velocityRef.current.y += velocity.y * 0.02;
+        }
     }
     
     // Decay inertia
@@ -94,15 +126,22 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
     rotationRef.current.x += (velocityRef.current.y * 2.5) * delta;
     
     // Add gesture tilt
-    const currentTilt = rotationRef.current.z;
-    rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+    if (isPhysicsActive) {
+        const currentTilt = rotationRef.current.z;
+        rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+    }
 
     // Expansion logic
     const openVal = handOpenness.current;
-    const baseExpansion = 0.5 + (openVal * 2.0);
+    let baseExpansion = 0.5 + (openVal * 2.0);
+    
+    // Visualizer Boost
+    if (isVisualizerActive) {
+        baseExpansion += (audioBass * 0.8); // Pulse expansion with bass
+    }
     
     // Pinch gravity (attraction)
-    const gravity = isPinching ? (1.0 - pinchDistance) * 3 : 0; 
+    const gravity = (isPinching && isPhysicsActive) ? (1.0 - pinchDistance) * 3 : 0; 
     const finalExpansion = Math.max(0.1, baseExpansion - gravity);
 
     // 2. Animate Items
@@ -134,7 +173,7 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
         state.camera.getWorldDirection(camDir);
         
         targetPos.copy(state.camera.position).add(camDir.multiplyScalar(4));
-        targetScale.set(4, 4, 4); // Uniform scale for group, child maintains aspect ratio
+        targetScale.set(4, 4, 4); 
         targetQuat.copy(state.camera.quaternion);
         
         // Mouse tilt parallax
@@ -146,7 +185,14 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
       } else {
         targetPos.copy(pos);
         // Slightly zoom on hover (1.2x)
-        const s = hovered === i ? 1.2 : 1.0;
+        let s = hovered === i ? 1.2 : 1.0;
+        
+        // Visualizer Scale Jitter
+        if (isVisualizerActive && !hovered) {
+             const noise = Math.sin(state.clock.elapsedTime * 10 + i) * audioMid;
+             s += noise * 0.5;
+        }
+
         targetScale.set(s, s, s);
         
         const dummy = new THREE.Object3D();
@@ -185,8 +231,6 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
          const isFocused = focused === i;
          const isVideo = item.type === 'video';
          
-         // If we are focused on a video, we render the video player
-         // Otherwise we render the image (thumbnail or actual image)
          const content = (isVideo && isFocused) 
             ? <VideoPlane url={item.url} opacity={1} />
             : <DreiImage
@@ -215,12 +259,13 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
 // ----------------------------------------------------------------------
 // PARTICLE SYSTEM (POINTS)
 // ----------------------------------------------------------------------
-const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData }) => {
+const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData, analyserRef }) => {
   const pointsRef = useRef<THREE.Points>(null);
-  const { shape, particleCount, color, secondaryColor, speed } = appState;
+  const { shape, particleCount, color, secondaryColor, speed, controlMode, isVisualizerActive } = appState;
 
   const targetPositions = useMemo(() => generateParticles(shape, particleCount), [shape, particleCount]);
   const currentPositions = useMemo(() => new Float32Array(particleCount * 3), [particleCount]);
+  const frequencyData = useRef(new Uint8Array(0));
 
   const colors = useMemo(() => {
     const arr = new Float32Array(particleCount * 3);
@@ -240,31 +285,56 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
 
   useFrame((state, delta) => {
     if (!pointsRef.current) return;
+    
+    // Audio Data
+    let audioBass = 0;
+    if (isVisualizerActive && analyserRef.current) {
+        const analyser = analyserRef.current;
+        if (frequencyData.current.length !== analyser.frequencyBinCount) {
+             frequencyData.current = new Uint8Array(analyser.frequencyBinCount);
+        }
+        analyser.getByteFrequencyData(frequencyData.current);
+        
+        let bassSum = 0;
+        for(let i=0; i<10; i++) bassSum += frequencyData.current[i];
+        audioBass = (bassSum / 10) / 255; 
+    }
 
     // Gesture Physics
+    const isPhysicsActive = controlMode === 'particles';
     const { velocity, pinchDistance, rotation: gestureRot, isPinching } = gestureData.current;
     
-    // Reduced multipliers
-    if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
-       velocityRef.current.x += velocity.x * 0.02;
-       velocityRef.current.y += velocity.y * 0.02;
+    if (isPhysicsActive) {
+        if (Math.abs(velocity.x) > 0.001 || Math.abs(velocity.y) > 0.001) {
+           velocityRef.current.x += velocity.x * 0.02;
+           velocityRef.current.y += velocity.y * 0.02;
+        }
     }
+    
     velocityRef.current.x *= 0.95;
     velocityRef.current.y *= 0.95;
 
     rotationRef.current.y += (delta * 0.1 * speed) + (velocityRef.current.x * 2.5 * delta);
     rotationRef.current.x += (velocityRef.current.y * 2.5) * delta;
     
-    const currentTilt = rotationRef.current.z;
-    rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+    if (isPhysicsActive) {
+        const currentTilt = rotationRef.current.z;
+        rotationRef.current.z = THREE.MathUtils.lerp(currentTilt, gestureRot, 0.1);
+    }
 
     pointsRef.current.rotation.copy(rotationRef.current);
 
     // Particle Animation
     const openVal = handOpenness.current;
     const smoothTime = 2.0 * delta; 
-    const baseExpansion = 0.2 + (openVal * 2.8);
-    const gravity = isPinching ? (1.0 - pinchDistance) * 5 : 0;
+    let baseExpansion = 0.2 + (openVal * 2.8);
+    
+    // Visualizer Expansion
+    if (isVisualizerActive) {
+        baseExpansion += (audioBass * 1.5); // Significant bass kick
+    }
+    
+    const gravity = (isPinching && isPhysicsActive) ? (1.0 - pinchDistance) * 5 : 0;
     const finalExpansion = Math.max(0.01, baseExpansion - gravity);
     
     const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
@@ -312,7 +382,7 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
 // ----------------------------------------------------------------------
 // MAIN SCENE
 // ----------------------------------------------------------------------
-const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData }) => {
+const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData, analyserRef }) => {
   const controlsRef = useRef<any>(null);
   
   const hasItems = appState.galleryItems.length > 0;
@@ -332,12 +402,18 @@ const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, 
             appState={appState} 
             handOpenness={handOpenness} 
             gestureData={gestureData}
-            controlsRef={controlsRef} 
+            controlsRef={controlsRef}
+            analyserRef={analyserRef}
           />
         )}
         
         {showParticles && (
-          <ParticleSystem appState={appState} handOpenness={handOpenness} gestureData={gestureData} />
+          <ParticleSystem 
+            appState={appState} 
+            handOpenness={handOpenness} 
+            gestureData={gestureData}
+            analyserRef={analyserRef}
+          />
         )}
 
         <OrbitControls 

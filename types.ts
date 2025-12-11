@@ -10,13 +10,14 @@ export enum ShapeType {
   GALLERY = 'Gallery'
 }
 
-export type MediaType = 'image' | 'video';
+export type MediaType = 'image' | 'video' | 'audio';
 
 export interface MediaItem {
   id: string;
   url: string;
   type: MediaType;
   thumbnail?: string; // Used for video preview or low-res placeholder
+  name?: string;
   file?: File; // Keep reference if needed
 }
 
@@ -27,6 +28,12 @@ export interface GestureData {
   isPinching: boolean;
 }
 
+export interface SensitivitySettings {
+  movement: number;
+  rotation: number;
+  pinch: number;
+}
+
 export interface AppState {
   shape: ShapeType;
   color: string;
@@ -34,8 +41,16 @@ export interface AppState {
   particleCount: number;
   speed: number;
   interactionMode: 'mouse' | 'hand';
+  controlMode: 'particles' | 'music'; // New: Switch between particle and music control
   galleryItems: MediaItem[];
   renderMode: 'particles' | 'images' | 'mixed';
+  
+  // Music State
+  audioTracks: MediaItem[];
+  currentTrackIndex: number;
+  isPlaying: boolean;
+  volume: number;
+  isVisualizerActive: boolean; // Controls if particles react to audio
 }
 
 export interface HandData {

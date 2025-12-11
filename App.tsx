@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import ParticleScene from './components/ParticleScene';
 import Controls from './components/Controls';
 import HandTracker from './components/HandTracker';
+import MusicPlayer from './components/MusicPlayer';
 import { AppState, ShapeType, GestureData } from './types';
 
 const App: React.FC = () => {
@@ -14,11 +15,38 @@ const App: React.FC = () => {
     particleCount: 3000,
     speed: 1.0,
     interactionMode: 'mouse', // Default to mouse initially
+    controlMode: 'particles', // Default to particle control
     galleryItems: [],
-    renderMode: 'particles'
+    renderMode: 'particles',
+    
+    // Music State
+    audioTracks: [
+      {
+        id: 'demo-1',
+        url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        type: 'audio',
+        name: 'Demo Track 1 (SoundHelix)'
+      },
+      {
+        id: 'demo-2',
+        url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3',
+        type: 'audio',
+        name: 'Demo Track 2 (SoundHelix)'
+      },
+      {
+        id: 'demo-3',
+        url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3',
+        type: 'audio',
+        name: 'Demo Track 3 (SoundHelix)'
+      }
+    ],
+    currentTrackIndex: 0,
+    isPlaying: false, // Prevent autoplay error
+    volume: 0.5,
+    isVisualizerActive: false
   });
 
-  // This ref is shared between the HandTracker (writer) and ParticleScene (reader)
+  // This ref is shared between the HandTracker (writer) and ParticleScene/MusicPlayer (readers)
   const handOpennessRef = useRef<number>(0.5);
   const gestureDataRef = useRef<GestureData>({
     velocity: { x: 0, y: 0 },
@@ -26,6 +54,9 @@ const App: React.FC = () => {
     rotation: 0,
     isPinching: false
   });
+
+  // Shared Audio Analyzer Ref
+  const analyserRef = useRef<AnalyserNode | null>(null);
 
   const handleHandUpdate = (isOpen: boolean, openness: number, gesture: GestureData) => {
     // Smooth smoothing
@@ -80,8 +111,16 @@ const App: React.FC = () => {
         appState={appState} 
         handOpenness={handOpennessRef} 
         gestureData={gestureDataRef}
+        analyserRef={analyserRef}
       />
       
+      <MusicPlayer 
+         appState={appState}
+         setAppState={setAppState}
+         gestureDataRef={gestureDataRef}
+         analyserRef={analyserRef}
+      />
+
       <Controls appState={appState} setAppState={setAppState} />
       
       <HandTracker 
@@ -92,8 +131,17 @@ const App: React.FC = () => {
       {/* Instructions Overlay if Hand Mode is active */}
       {appState.interactionMode === 'hand' && (
         <div className="absolute top-20 left-1/2 transform -translate-x-1/2 pointer-events-none text-white/50 text-sm bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm z-10 text-center">
-          <p>Open hand to expand • Fist to contract</p>
-          <p className="text-xs mt-1 opacity-70">Swipe to spin • Pinch to attract • Tilt to rotate</p>
+            {appState.controlMode === 'particles' ? (
+                <>
+                    <p>Open hand to expand • Fist to contract</p>
+                    <p className="text-xs mt-1 opacity-70">Swipe to spin • Pinch to attract • Tilt to rotate</p>
+                </>
+            ) : (
+                <>
+                    <p className="text-green-300">Music Mode Active</p>
+                    <p className="text-xs mt-1 opacity-70">Swipe Up/Down: Volume • Swipe Side: Skip • Pinch: Play/Pause</p>
+                </>
+            )}
         </div>
       )}
     </div>
