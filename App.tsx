@@ -45,6 +45,8 @@ const App: React.FC = () => {
     isVisualizerActive: true // Enable visualizer by default
   });
 
+  const [isControlsVisible, setIsControlsVisible] = useState(true);
+
   // This ref is shared between the HandTracker (writer) and ParticleScene/MusicPlayer (readers)
   const handOpennessRef = useRef<number>(0.5);
   const gestureDataRef = useRef<GestureData>({
@@ -54,6 +56,9 @@ const App: React.FC = () => {
     isPinching: false
   });
 
+  // Wave Detection Refs
+  const waveState = useRef({ phase: 0, lastTime: 0, cooldown: 0 });
+
   // Shared Audio Analyzer Ref
   const analyserRef = useRef<AnalyserNode | null>(null);
 
@@ -61,6 +66,46 @@ const App: React.FC = () => {
     // Smooth smoothing
     handOpennessRef.current = handOpennessRef.current + (openness - handOpennessRef.current) * 0.1;
     gestureDataRef.current = gesture;
+
+    // Check for Wave Gesture
+    checkForWave(gesture.velocity);
+  };
+
+  const checkForWave = (velocity: { x: number; y: number }) => {
+    const now = Date.now();
+    if (now < waveState.current.cooldown) return;
+
+    // Reset phase if too much time passed (e.g. > 600ms between swings)
+    if (now - waveState.current.lastTime > 600) {
+      waveState.current.phase = 0;
+    }
+
+    const V_THRESH = 0.6; // High velocity threshold for wave
+
+    if (waveState.current.phase === 0) {
+      if (velocity.x > V_THRESH) {
+        waveState.current.phase = 1; // Started Right
+        waveState.current.lastTime = now;
+      } else if (velocity.x < -V_THRESH) {
+        waveState.current.phase = -1; // Started Left
+        waveState.current.lastTime = now;
+      }
+    } else {
+      // Check for return swing
+      if (waveState.current.phase === 1 && velocity.x < -V_THRESH) {
+        // Right then Left -> WAVE detected
+        triggerWaveToggle();
+      } else if (waveState.current.phase === -1 && velocity.x > V_THRESH) {
+        // Left then Right -> WAVE detected
+        triggerWaveToggle();
+      }
+    }
+  };
+
+  const triggerWaveToggle = () => {
+    setIsControlsVisible(prev => !prev);
+    waveState.current.phase = 0;
+    waveState.current.cooldown = Date.now() + 1500; // Cooldown to prevent double toggles
   };
 
   // Mouse fallback
@@ -122,7 +167,12 @@ const App: React.FC = () => {
          handOpennessRef={handOpennessRef}
       />
 
-      <Controls appState={appState} setAppState={setAppState} />
+      <Controls 
+        appState={appState} 
+        setAppState={setAppState} 
+        isVisible={isControlsVisible}
+        setIsVisible={setIsControlsVisible}
+      />
       
       <HandTracker 
         isActive={appState.interactionMode === 'hand'} 
@@ -130,25 +180,25 @@ const App: React.FC = () => {
       />
 
       {/* Instructions Overlay if Hand Mode is active */}
-      {appState.interactionMode === 'hand' && (
-        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 pointer-events-none text-white/50 text-sm bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm z-10 text-center">
+      {appState.interactionMode === 'hand' && isControlsVisible && (
+        <div className="absolute top-20 left-1/2 transform -translate-x-1/2 pointer-events-none text-white/50 text-sm bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm z-10 text-center animate-in fade-in zoom-in duration-300">
             {appState.shape === ShapeType.MUSIC_PLAYER ? (
                 <>
                   <p className="text-blue-300">Air Music Control</p>
                   <p className="text-xs mt-1 opacity-70">
                     Open Palm: Play • Fist: Pause • Swipe Right: Next • Swipe Left: Prev<br/>
-                    Twist: Seek • Pinch & Throw: Remove Song
+                    Twist: Seek • Pinch & Throw: Remove Song • Wave: Toggle UI
                   </p>
                 </>
             ) : appState.controlMode === 'particles' ? (
                 <>
                     <p>Open hand to expand • Fist to contract</p>
-                    <p className="text-xs mt-1 opacity-70">Swipe to spin • Pinch to attract • Tilt to rotate</p>
+                    <p className="text-xs mt-1 opacity-70">Swipe to spin • Pinch to attract • Tilt to rotate • Wave: Toggle UI</p>
                 </>
             ) : (
                 <>
                     <p className="text-green-300">Music Gestures Active</p>
-                    <p className="text-xs mt-1 opacity-70">Swipe Up/Down: Volume • Swipe Side: Skip • Pinch: Play/Pause</p>
+                    <p className="text-xs mt-1 opacity-70">Swipe Up/Down: Volume • Swipe Side: Skip • Pinch: Play/Pause • Wave: Toggle UI</p>
                 </>
             )}
         </div>

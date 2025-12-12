@@ -1,16 +1,17 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { ShapeType, AppState, MediaItem } from '../types';
-import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download, Music, Mic2, SkipBack, SkipForward, Play, Pause, Volume2, VolumeX, Hand, Activity, ListMusic, X } from 'lucide-react';
+import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download, Music, Mic2, SkipBack, SkipForward, Play, Pause, Volume2, VolumeX, Hand, Activity, ListMusic, X, EyeOff, Menu } from 'lucide-react';
 import { generateThemeFromPrompt } from '../services/geminiService';
 import { generateVideoThumbnail } from '../utils/media';
 
 interface ControlsProps {
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
+  isVisible: boolean;
+  setIsVisible: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
-const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
+const Controls: React.FC<ControlsProps> = ({ appState, setAppState, isVisible, setIsVisible }) => {
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
@@ -23,6 +24,49 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const timerRef = useRef<number | null>(null);
+
+  // Auto-hide logic
+  useEffect(() => {
+    const resetTimer = () => {
+      // If manually hidden, don't auto-show. 
+      // But if visible, reset the hide timer.
+      if (isVisible) {
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => {
+          setIsVisible(false);
+        }, 5000); // Hide after 5 seconds of inactivity
+      }
+    };
+
+    const handleActivity = () => {
+      if (isVisible) {
+        resetTimer();
+      } else {
+        // Optional: Auto-show on mouse movement? 
+        // For now, let's strictly follow "waving hand" or manual toggle to show,
+        // but reset timer if already shown so it doesn't disappear while using.
+        // We can add a small "Show" button trigger area if needed, but the prompt emphasizes gestures.
+        // Let's allow mouse interaction to keep it alive.
+      }
+    };
+
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('click', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+    
+    // Initialize timer
+    resetTimer();
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('click', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    };
+  }, [isVisible, setIsVisible]);
 
   useEffect(() => {
     const handler = (e: any) => {
@@ -195,10 +239,10 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
   const currentTrack = appState.audioTracks[appState.currentTrackIndex];
 
   return (
-    <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col justify-between p-6">
+    <div className="absolute top-0 left-0 w-full h-full pointer-events-none flex flex-col justify-between p-6 z-20">
       
-      {/* Top Bar */}
-      <div className="pointer-events-auto flex items-start justify-between">
+      {/* Top Bar - Always Visible (or we can hide it too, but better UX to keep it or fade slightly) */}
+      <div className={`pointer-events-auto flex items-start justify-between transition-opacity duration-500 ${isVisible ? 'opacity-100' : 'opacity-30 hover:opacity-100'}`}>
         <div>
           <h1 className="text-3xl font-bold text-white tracking-tighter drop-shadow-lg">Zen<span className="text-blue-400">Particles</span></h1>
           <p className="text-white/60 text-sm mt-1">Interactive 3D Generative Gallery</p>
@@ -246,9 +290,23 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
         </div>
       </div>
 
-      {/* Control Panel */}
-      <div className="pointer-events-auto w-full max-w-sm bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-5 text-white shadow-2xl space-y-6 max-h-[80vh] overflow-y-auto">
-        
+      {/* Floating Toggle Button (Visible when hidden) */}
+      <button
+        onClick={() => setIsVisible(true)}
+        className={`pointer-events-auto absolute bottom-6 left-6 p-4 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 rounded-full text-white shadow-lg transition-all duration-500 transform ${
+            !isVisible ? 'translate-y-0 opacity-100 rotate-0' : 'translate-y-10 opacity-0 -rotate-90 pointer-events-none'
+        }`}
+        title="Show Controls"
+      >
+        <Menu size={24} />
+      </button>
+
+      {/* Control Panel - Auto Hides */}
+      <div 
+        className={`pointer-events-auto w-full max-w-sm bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-5 text-white shadow-2xl space-y-6 max-h-[80vh] overflow-y-auto transition-all duration-700 ease-in-out transform ${
+          isVisible ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0 pointer-events-none'
+        }`}
+      >
         {/* Shape Selector */}
         <div>
           <label className="text-xs uppercase tracking-wider text-white/50 font-semibold mb-3 block">Templates</label>
