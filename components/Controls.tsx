@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { ShapeType, AppState, MediaItem } from '../types';
-import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download, Music, Mic2, SkipBack, SkipForward, Play, Pause, Volume2, VolumeX, Hand, Activity } from 'lucide-react';
+import { Camera, MousePointer2, Sparkles, Loader2, Palette, ImagePlus, Upload, MousePointerClick, Grid3X3, Images, Layers, FolderOpen, PlayCircle, Download, Music, Mic2, SkipBack, SkipForward, Play, Pause, Volume2, VolumeX, Hand, Activity, ListMusic, X } from 'lucide-react';
 import { generateThemeFromPrompt } from '../services/geminiService';
 import { generateVideoThumbnail } from '../utils/media';
 
@@ -15,6 +15,7 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
   const [aiError, setAiError] = useState('');
+  const [showPlaylist, setShowPlaylist] = useState(false);
   
   // PWA Install State
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -150,6 +151,22 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
           isPlaying: true, // Auto play on upload
           currentTrackIndex: prev.audioTracks.length // Start playing the first new track
       }));
+  };
+
+  const removeTrack = (index: number) => {
+      setAppState(prev => {
+          const newTracks = prev.audioTracks.filter((_, i) => i !== index);
+          let newIndex = prev.currentTrackIndex;
+          if (index < newIndex) newIndex--;
+          if (newIndex >= newTracks.length) newIndex = 0;
+          
+          return {
+              ...prev,
+              audioTracks: newTracks,
+              currentTrackIndex: newIndex,
+              isPlaying: newTracks.length > 0 ? prev.isPlaying : false
+          };
+      });
   };
 
   const handleAiGenerate = async () => {
@@ -304,6 +321,18 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
                         >
                             <Activity size={16} />
                         </button>
+                        
+                        <button
+                            onClick={() => setShowPlaylist(!showPlaylist)}
+                            title="Playlist"
+                            className={`p-2 rounded-full transition-all ${
+                                showPlaylist
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-white/5 text-white/30 hover:bg-white/10'
+                            }`}
+                        >
+                            <ListMusic size={16} />
+                        </button>
                     </div>
 
                     {/* Controls */}
@@ -341,6 +370,31 @@ const Controls: React.FC<ControlsProps> = ({ appState, setAppState }) => {
                            className="flex-1 h-1 bg-white/20 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
                         />
                     </div>
+                    
+                    {/* Playlist View */}
+                    {showPlaylist && (
+                        <div className="mt-2 bg-black/40 rounded border border-white/5 max-h-32 overflow-y-auto custom-scrollbar">
+                            {appState.audioTracks.map((track, idx) => (
+                                <div 
+                                    key={track.id}
+                                    onClick={() => setAppState(prev => ({...prev, currentTrackIndex: idx, isPlaying: true}))}
+                                    className={`flex items-center justify-between p-2 text-xs cursor-pointer hover:bg-white/5 ${
+                                        idx === appState.currentTrackIndex ? 'bg-white/10 text-green-300' : 'text-white/60'
+                                    }`}
+                                >
+                                    <span className="truncate flex-1 pr-2">
+                                        {idx + 1}. {track.name}
+                                    </span>
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); removeTrack(idx); }}
+                                        className="text-white/20 hover:text-red-400"
+                                    >
+                                        <X size={12}/>
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                  </div>
              )}
              

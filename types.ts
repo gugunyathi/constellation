@@ -7,7 +7,8 @@ export enum ShapeType {
   BUDDHA = 'Buddha',
   SPIRAL = 'Spiral',
   FIREWORKS = 'Fireworks',
-  GALLERY = 'Gallery'
+  GALLERY = 'Gallery',
+  MUSIC_PLAYER = 'Music'
 }
 
 export type MediaType = 'image' | 'video' | 'audio';

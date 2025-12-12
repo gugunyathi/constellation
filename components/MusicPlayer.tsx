@@ -1,17 +1,18 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { AppState, GestureData } from '../types';
+import { AppState, GestureData, ShapeType } from '../types';
 
 interface MusicPlayerProps {
   appState: AppState;
   setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   gestureDataRef: React.MutableRefObject<GestureData>;
   analyserRef: React.MutableRefObject<AnalyserNode | null>;
+  handOpennessRef: React.MutableRefObject<number>;
 }
 
-const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestureDataRef, analyserRef }) => {
+const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestureDataRef, analyserRef, handOpennessRef }) => {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const { audioTracks, currentTrackIndex, isPlaying, volume, controlMode, interactionMode } = appState;
+  const { audioTracks, currentTrackIndex, isPlaying, volume, controlMode, interactionMode, shape } = appState;
   const contextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   
@@ -20,6 +21,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
   // Debounce refs for gesture control
   const lastActionTime = useRef<number>(0);
   const wasPinching = useRef<boolean>(false);
+  const wasOpen = useRef<boolean>(true);
 
   // Initialize Audio Context and Analyser
   useEffect(() => {
@@ -29,7 +31,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
         const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AudioContext();
         const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256; // Defines data resolution. 128 bins.
+        analyser.fftSize = 256; 
         analyser.smoothingTimeConstant = 0.8;
 
         const source = ctx.createMediaElementSource(audioRef.current);
@@ -42,10 +44,6 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
     } catch (e) {
         console.error("Audio Context Init Error:", e);
     }
-    
-    return () => {
-        // Cleanup if necessary, though usually we want the context to persist
-    };
   }, [analyserRef]);
 
   // Sync Audio Element with State
@@ -65,11 +63,8 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
       if (playPromise !== undefined) {
         playPromise.catch(error => {
           if (error.name === 'NotAllowedError') {
-             // Autoplay prevented. We revert state to "Paused" to keep UI in sync.
              console.log("Autoplay blocked by browser policy. Pausing.");
              setAppState(prev => ({ ...prev, isPlaying: false }));
-          } else {
-             // Silent catch for interruption errors
           }
         });
       }
@@ -93,65 +88,128 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
             }
         }
     }
-  }, [currentTrack]); // Only reload if track object changes
+  }, [currentTrack]); 
 
   // Gesture Control Loop
   useEffect(() => {
-    if (controlMode !== 'music' || interactionMode !== 'hand') return;
+    // Enable gestures if in Music Control Mode OR if using the Music Template
+    const isMusicTemplate = shape === ShapeType.MUSIC_PLAYER;
+    const isControlMode = controlMode === 'music';
+
+    if ((!isMusicTemplate && !isControlMode) || interactionMode !== 'hand') return;
 
     let animationFrameId: number;
 
     const checkGestures = () => {
       const now = Date.now();
-      const { velocity, isPinching } = gestureDataRef.current;
+      const { velocity, isPinching, rotation } = gestureDataRef.current;
+      const openness = handOpennessRef.current;
+      const speedMag = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
       
-      // 1. Play/Pause (Pinch Toggle)
-      // Debounce pinch to avoid rapid toggling
-      if (isPinching && !wasPinching.current && (now - lastActionTime.current > 1000)) {
-        setAppState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
-        lastActionTime.current = now;
-      }
-      wasPinching.current = isPinching;
-
-      // 2. Volume Control (Vertical Swipe / Hand Height)
-      // Using velocity Y to adjust volume smoothly
-      if (Math.abs(velocity.y) > 0.1) {
-         setAppState(prev => {
-             const change = velocity.y * 0.05; // Sensitivity
-             return { ...prev, volume: Math.max(0, Math.min(1, prev.volume + change)) };
-         });
-      }
-
-      // 3. Skip / Prev (Horizontal Swipe)
-      // High threshold for swipe to prevent accidental skips
-      if (now - lastActionTime.current > 1000) {
-        if (velocity.x > 0.8) {
-           // Prev
+      // -----------------------------
+      // 1. PINCH & THROW (Remove Song) - Specific to Music Template
+      // -----------------------------
+      if (isMusicTemplate && isPinching && speedMag > 1.5 && (now - lastActionTime.current > 1500)) {
+           // Detected Throw
            setAppState(prev => {
-               const newIndex = (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length;
-               return { ...prev, currentTrackIndex: newIndex, isPlaying: true };
+               if (prev.audioTracks.length <= 1) return prev; // Don't remove last track
+               
+               const newTracks = prev.audioTracks.filter((_, i) => i !== prev.currentTrackIndex);
+               const newIndex = prev.currentTrackIndex % newTracks.length;
+               
+               return {
+                   ...prev,
+                   audioTracks: newTracks,
+                   currentTrackIndex: newIndex,
+                   isPlaying: true
+               };
            });
            lastActionTime.current = now;
-        } else if (velocity.x < -0.8) {
-           // Next
-           setAppState(prev => {
-               const newIndex = (prev.currentTrackIndex + 1) % prev.audioTracks.length;
-               return { ...prev, currentTrackIndex: newIndex, isPlaying: true };
-           });
+           return; // Exit to prevent other triggers
+      }
+
+      // -----------------------------
+      // 2. PLAY / PAUSE
+      // -----------------------------
+      if (isMusicTemplate) {
+          // Open Palm (>0.8) -> Play
+          if (openness > 0.8 && !isPlaying && (now - lastActionTime.current > 500)) {
+              setAppState(prev => ({ ...prev, isPlaying: true }));
+              lastActionTime.current = now;
+          }
+          // Fist (<0.2) -> Pause
+          else if (openness < 0.2 && isPlaying && (now - lastActionTime.current > 500)) {
+              setAppState(prev => ({ ...prev, isPlaying: false }));
+              lastActionTime.current = now;
+          }
+      } else {
+          // Standard Toggle (Control Mode)
+          if (isPinching && !wasPinching.current && (now - lastActionTime.current > 1000)) {
+            setAppState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
+            lastActionTime.current = now;
+          }
+      }
+
+      // -----------------------------
+      // 3. SKIP / PREV (Horizontal Swipe)
+      // -----------------------------
+      if (now - lastActionTime.current > 800) {
+        // Lower threshold for better sensitivity (0.6 -> 0.5)
+        if (velocity.x > 0.5) {
+           // Physical Swipe Right -> Next
+           setAppState(prev => ({ 
+               ...prev, 
+               currentTrackIndex: (prev.currentTrackIndex + 1) % prev.audioTracks.length,
+               isPlaying: true 
+            }));
+           lastActionTime.current = now;
+        } else if (velocity.x < -0.5) {
+           // Physical Swipe Left -> Prev
+           setAppState(prev => ({ 
+               ...prev, 
+               currentTrackIndex: (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length,
+               isPlaying: true
+            }));
            lastActionTime.current = now;
         }
       }
+      
+      // -----------------------------
+      // 4. SEEK / FF / RW (Twist)
+      // -----------------------------
+      if (isMusicTemplate && audioRef.current) {
+         if (rotation > 0.6) {
+             // Twist Right -> FF
+             audioRef.current.currentTime += 0.2;
+         } else if (rotation < -0.6) {
+             // Twist Left -> RW
+             audioRef.current.currentTime -= 0.2;
+         }
+      }
+      
+      // -----------------------------
+      // 5. VOLUME (Vertical Swipe) - Only in Control Mode, not Template (conflicts with throw/general)
+      // -----------------------------
+      if (isControlMode && !isMusicTemplate) {
+          if (Math.abs(velocity.y) > 0.2) { // Slightly higher threshold to prevent accidental volume change
+             setAppState(prev => {
+                 const change = velocity.y * 0.05; 
+                 return { ...prev, volume: Math.max(0, Math.min(1, prev.volume + change)) };
+             });
+          }
+      }
 
+      wasPinching.current = isPinching;
+      wasOpen.current = openness > 0.8;
+      
       animationFrameId = requestAnimationFrame(checkGestures);
     };
 
     animationFrameId = requestAnimationFrame(checkGestures);
-
     return () => cancelAnimationFrame(animationFrameId);
-  }, [controlMode, interactionMode, setAppState]);
+  }, [controlMode, interactionMode, shape, isPlaying, setAppState]);
 
   const handleEnded = () => {
-    // Auto play next
     setAppState(prev => {
         const newIndex = (prev.currentTrackIndex + 1) % prev.audioTracks.length;
         return { ...prev, currentTrackIndex: newIndex };
@@ -160,8 +218,7 @@ const MusicPlayer: React.FC<MusicPlayerProps> = ({ appState, setAppState, gestur
 
   const handleError = (e: React.SyntheticEvent<HTMLAudioElement, Event>) => {
     const target = e.target as HTMLAudioElement;
-    console.error("Audio Error:", target.error?.code, target.error?.message);
-    // Optionally try next track if one fails
+    console.error("Audio Error:", target.error?.code);
   };
 
   return (

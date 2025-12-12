@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import ParticleScene from './components/ParticleScene';
 import Controls from './components/Controls';
@@ -43,7 +42,7 @@ const App: React.FC = () => {
     currentTrackIndex: 0,
     isPlaying: false, // Prevent autoplay error
     volume: 0.5,
-    isVisualizerActive: false
+    isVisualizerActive: true // Enable visualizer by default
   });
 
   // This ref is shared between the HandTracker (writer) and ParticleScene/MusicPlayer (readers)
@@ -109,6 +108,7 @@ const App: React.FC = () => {
     <div className="relative w-full h-full bg-black">
       <ParticleScene 
         appState={appState} 
+        setAppState={setAppState}
         handOpenness={handOpennessRef} 
         gestureData={gestureDataRef}
         analyserRef={analyserRef}
@@ -119,6 +119,7 @@ const App: React.FC = () => {
          setAppState={setAppState}
          gestureDataRef={gestureDataRef}
          analyserRef={analyserRef}
+         handOpennessRef={handOpennessRef}
       />
 
       <Controls appState={appState} setAppState={setAppState} />
@@ -131,14 +132,22 @@ const App: React.FC = () => {
       {/* Instructions Overlay if Hand Mode is active */}
       {appState.interactionMode === 'hand' && (
         <div className="absolute top-20 left-1/2 transform -translate-x-1/2 pointer-events-none text-white/50 text-sm bg-black/40 px-4 py-2 rounded-full backdrop-blur-sm z-10 text-center">
-            {appState.controlMode === 'particles' ? (
+            {appState.shape === ShapeType.MUSIC_PLAYER ? (
+                <>
+                  <p className="text-blue-300">Air Music Control</p>
+                  <p className="text-xs mt-1 opacity-70">
+                    Open Palm: Play • Fist: Pause • Swipe Right: Next • Swipe Left: Prev<br/>
+                    Twist: Seek • Pinch & Throw: Remove Song
+                  </p>
+                </>
+            ) : appState.controlMode === 'particles' ? (
                 <>
                     <p>Open hand to expand • Fist to contract</p>
                     <p className="text-xs mt-1 opacity-70">Swipe to spin • Pinch to attract • Tilt to rotate</p>
                 </>
             ) : (
                 <>
-                    <p className="text-green-300">Music Mode Active</p>
+                    <p className="text-green-300">Music Gestures Active</p>
                     <p className="text-xs mt-1 opacity-70">Swipe Up/Down: Volume • Swipe Side: Skip • Pinch: Play/Pause</p>
                 </>
             )}

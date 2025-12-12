@@ -1,13 +1,13 @@
-
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars, Image as DreiImage, useCursor, useVideoTexture } from '@react-three/drei';
+import { OrbitControls, Stars, Image as DreiImage, useCursor, useVideoTexture, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { generateParticles } from '../utils/shapes';
 import { AppState, ShapeType, GestureData, MediaItem } from '../types';
 
 interface ParticleSystemProps {
   appState: AppState;
+  setAppState: React.Dispatch<React.SetStateAction<AppState>>;
   handOpenness: React.MutableRefObject<number>;
   gestureData: React.MutableRefObject<GestureData>;
   analyserRef: React.MutableRefObject<AnalyserNode | null>;
@@ -34,6 +34,101 @@ const VideoPlane = ({ url, opacity }: { url: string, opacity: number }) => {
       <meshBasicMaterial map={texture} side={THREE.DoubleSide} transparent opacity={opacity} />
     </mesh>
   );
+};
+
+// ----------------------------------------------------------------------
+// MUSIC INTERFACE SYSTEM (3D BUTTONS)
+// ----------------------------------------------------------------------
+const MusicInterfaceSystem: React.FC<ParticleSystemProps> = ({ appState, setAppState }) => {
+    const { isPlaying, currentTrackIndex, audioTracks } = appState;
+    const [hoveredButton, setHoveredButton] = useState<string | null>(null);
+    useCursor(hoveredButton !== null);
+
+    const handlePlayPause = (e: any) => {
+        e.stopPropagation();
+        setAppState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
+    };
+
+    const handleNext = (e: any) => {
+        e.stopPropagation();
+        setAppState(prev => ({ 
+            ...prev, 
+            currentTrackIndex: (prev.currentTrackIndex + 1) % prev.audioTracks.length,
+            isPlaying: true
+        }));
+    };
+
+    const handlePrev = (e: any) => {
+        e.stopPropagation();
+        setAppState(prev => ({ 
+            ...prev, 
+            currentTrackIndex: (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length,
+            isPlaying: true
+        }));
+    };
+
+    // Helper to create button
+    const MusicButton = ({ position, text, onClick, id, size = 1, color = "#fff" }: any) => (
+        <group position={position} onClick={onClick} onPointerOver={() => setHoveredButton(id)} onPointerOut={() => setHoveredButton(null)}>
+             {/* Hit Area */}
+             <mesh visible={false}>
+                 <planeGeometry args={[size * 1.5, size * 1.5]} />
+                 <meshBasicMaterial />
+             </mesh>
+             <Text
+                font="https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff"
+                fontSize={size}
+                color={hoveredButton === id ? "#00ffff" : color}
+                anchorX="center"
+                anchorY="middle"
+             >
+                {text}
+             </Text>
+        </group>
+    );
+
+    return (
+        <group position={[0, -6, 2]}> {/* Moved buttons down slightly */}
+            {/* Play/Pause */}
+            <MusicButton 
+                id="play"
+                position={[0, 0, 0]} 
+                text={isPlaying ? "❚❚" : "▶"} 
+                size={2.5}
+                onClick={handlePlayPause}
+            />
+            
+            {/* Prev */}
+            <MusicButton 
+                id="prev"
+                position={[-3.5, 0, 0]} 
+                text="⏮" 
+                size={1.5}
+                onClick={handlePrev}
+            />
+
+            {/* Next */}
+            <MusicButton 
+                id="next"
+                position={[3.5, 0, 0]} 
+                text="⏭" 
+                size={1.5}
+                onClick={handleNext}
+            />
+
+            {/* Track Info Floating Text */}
+            <Text
+                position={[0, -2, 0]}
+                fontSize={0.5}
+                color="#ffffff"
+                anchorX="center"
+                maxWidth={10}
+                textAlign="center"
+            >
+                {audioTracks[currentTrackIndex]?.name || "No Track"}
+            </Text>
+        </group>
+    );
 };
 
 // ----------------------------------------------------------------------
@@ -261,7 +356,7 @@ const GallerySystem: React.FC<GallerySystemProps> = ({ appState, handOpenness, g
 // ----------------------------------------------------------------------
 const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData, analyserRef }) => {
   const pointsRef = useRef<THREE.Points>(null);
-  const { shape, particleCount, color, secondaryColor, speed, controlMode, isVisualizerActive } = appState;
+  const { shape, particleCount, color, secondaryColor, speed, controlMode, isVisualizerActive, isPlaying } = appState;
 
   const targetPositions = useMemo(() => generateParticles(shape, particleCount), [shape, particleCount]);
   const currentPositions = useMemo(() => new Float32Array(particleCount * 3), [particleCount]);
@@ -286,18 +381,33 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
   useFrame((state, delta) => {
     if (!pointsRef.current) return;
     
-    // Audio Data
+    // Audio Data Collection
     let audioBass = 0;
-    if (isVisualizerActive && analyserRef.current) {
+    const hasAudio = isVisualizerActive && analyserRef.current && isPlaying;
+    let usingSimulation = false;
+
+    if (hasAudio && analyserRef.current) {
         const analyser = analyserRef.current;
         if (frequencyData.current.length !== analyser.frequencyBinCount) {
              frequencyData.current = new Uint8Array(analyser.frequencyBinCount);
         }
         analyser.getByteFrequencyData(frequencyData.current);
         
+        // Compute overall bass for generic pulse
         let bassSum = 0;
         for(let i=0; i<10; i++) bassSum += frequencyData.current[i];
-        audioBass = (bassSum / 10) / 255; 
+        
+        // Check if data is dead (all zeros) but we are playing
+        // This indicates a CORS issue with remote audio
+        // In this case, use Simulation Fallback
+        const totalSum = frequencyData.current.reduce((a, b) => a + b, 0);
+        if (bassSum === 0 && totalSum === 0) {
+            usingSimulation = true;
+            // Fake the bass for the pulse using sine wave
+            audioBass = (Math.sin(state.clock.elapsedTime * 8) + 1) * 0.2;
+        } else {
+            audioBass = (bassSum / 10) / 255; 
+        }
     }
 
     // Gesture Physics
@@ -324,19 +434,19 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
 
     pointsRef.current.rotation.copy(rotationRef.current);
 
-    // Particle Animation
+    // Standard Particle Animation Vars
     const openVal = handOpenness.current;
     const smoothTime = 2.0 * delta; 
     let baseExpansion = 0.2 + (openVal * 2.8);
-    
-    // Visualizer Expansion
-    if (isVisualizerActive) {
-        baseExpansion += (audioBass * 1.5); // Significant bass kick
-    }
-    
+    if (isVisualizerActive) baseExpansion += (audioBass * 1.5);
     const gravity = (isPinching && isPhysicsActive) ? (1.0 - pinchDistance) * 5 : 0;
     const finalExpansion = Math.max(0.01, baseExpansion - gravity);
     
+    // MUSIC PLAYER TEMPLATE SPECIFIC LOGIC
+    const isMusicShape = shape === ShapeType.MUSIC_PLAYER;
+    const numBars = 16;
+    const particlesPerBar = Math.floor(particleCount / numBars);
+
     const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
 
     for (let i = 0; i < particleCount; i++) {
@@ -349,9 +459,56 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
       let cy = positions[i3 + 1];
       let cz = positions[i3 + 2];
 
-      const targetX = tx * finalExpansion;
-      const targetY = ty * finalExpansion;
-      const targetZ = tz * finalExpansion;
+      let targetX, targetY, targetZ;
+
+      if (isMusicShape) {
+         // Equalizer Logic
+         targetX = tx; 
+         targetZ = tz; 
+
+         let eqScale = 0.1; 
+
+         if (hasAudio) {
+             const barIndex = Math.floor(i / particlesPerBar);
+             if (barIndex < numBars) {
+                 let audioLevel = 0;
+
+                 if (usingSimulation) {
+                     // Fallback Simulation for remote non-CORS tracks
+                     const time = state.clock.elapsedTime;
+                     // Create a wave that moves through the bars
+                     const offset = barIndex * 0.5;
+                     audioLevel = (Math.sin(time * 8 + offset) + 1) * 0.4;
+                     // Add some high frequency jitter
+                     audioLevel += Math.random() * 0.1;
+                 } else {
+                     // Real Frequency Data - BIN AVERAGING
+                     // Map 16 bars to ~64 bins
+                     const binsPerBar = 4;
+                     const startBin = barIndex * binsPerBar;
+                     let sum = 0;
+                     for(let k=0; k<binsPerBar; k++) {
+                         sum += frequencyData.current[startBin + k] || 0;
+                     }
+                     audioLevel = (sum / binsPerBar) / 255.0;
+                 }
+                 
+                 // Apply to scale: Base + Boost
+                 eqScale = 0.1 + (audioLevel * 2.5);
+             }
+         }
+         
+         // Y Mapping: Scale up from bottom (-4)
+         const baseY = -4;
+         const relativeY = ty - baseY;
+         targetY = baseY + (relativeY * eqScale);
+
+      } else {
+         // Standard Logic
+         targetX = tx * finalExpansion;
+         targetY = ty * finalExpansion;
+         targetZ = tz * finalExpansion;
+      }
 
       const time = state.clock.elapsedTime * speed;
       const noise = Math.sin(time + i) * 0.1 * finalExpansion;
@@ -382,12 +539,15 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
 // ----------------------------------------------------------------------
 // MAIN SCENE
 // ----------------------------------------------------------------------
-const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, gestureData, analyserRef }) => {
+const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, setAppState, handOpenness, gestureData, analyserRef }) => {
   const controlsRef = useRef<any>(null);
   
   const hasItems = appState.galleryItems.length > 0;
   const showImages = hasItems && (appState.renderMode === 'images' || appState.renderMode === 'mixed');
   const showParticles = appState.renderMode === 'particles' || appState.renderMode === 'mixed';
+  
+  // Show music interface only if Music Player shape is active
+  const showMusicInterface = appState.shape === ShapeType.MUSIC_PLAYER;
 
   return (
     <div className="w-full h-full">
@@ -397,9 +557,20 @@ const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, 
         <pointLight position={[10, 10, 10]} intensity={1} />
         <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
 
+        {showMusicInterface && (
+            <MusicInterfaceSystem 
+                appState={appState}
+                setAppState={setAppState}
+                handOpenness={handOpenness}
+                gestureData={gestureData}
+                analyserRef={analyserRef}
+            />
+        )}
+
         {showImages && (
           <GallerySystem 
             appState={appState} 
+            setAppState={setAppState}
             handOpenness={handOpenness} 
             gestureData={gestureData}
             controlsRef={controlsRef}
@@ -410,6 +581,7 @@ const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, handOpenness, 
         {showParticles && (
           <ParticleSystem 
             appState={appState} 
+            setAppState={setAppState}
             handOpenness={handOpenness} 
             gestureData={gestureData}
             analyserRef={analyserRef}
