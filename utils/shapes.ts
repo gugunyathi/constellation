@@ -128,9 +128,9 @@ export const generateParticles = (type: ShapeType, count: number): Float32Array 
       }
       
       case ShapeType.MUSIC_PLAYER: {
-        // Graphic Equalizer: 16 Bars
-        // We arrange particles into 16 vertical columns (bars)
-        const numBars = 16;
+        // Graphic Equalizer: 8 Bars (Updated)
+        // We arrange particles into 8 vertical columns (bars)
+        const numBars = 8;
         // Ensure even distribution
         const particlesPerBar = Math.floor(count / numBars);
         
@@ -143,25 +143,23 @@ export const generateParticles = (type: ShapeType, count: number): Float32Array 
             const normalizedHeight = particleInBarIndex / particlesPerBar; // 0.0 to 1.0
             
             // Layout: Line along X axis
-            const spacing = 1.2;
+            const spacing = 2.5; // Wider spacing for fewer bars
             const totalWidth = numBars * spacing;
             const startX = -totalWidth / 2;
             
             x = startX + (barIndex * spacing) + (spacing * 0.5);
             
-            // Y: From bottom (-4) upwards
-            // The particles form a "full" bar at rest. 
-            // We will scale them down in the animation loop if audio is quiet.
-            const barHeight = 8;
-            y = -4 + (normalizedHeight * barHeight);
+            // Y: From bottom (-12) upwards (Height 24)
+            const barHeight = 24; // 3x taller
+            y = -12 + (normalizedHeight * barHeight);
             
             // Z: Give it some depth so it's a 3D bar, not a line
-            z = (Math.random() - 0.5) * 1.5;
+            z = (Math.random() - 0.5) * 2.0;
             
         } else {
             // Leftover particles (remainder) - put them in a cloud above
             x = (Math.random() - 0.5) * 20;
-            y = 5 + Math.random() * 2;
+            y = 10 + Math.random() * 5;
             z = (Math.random() - 0.5) * 10;
         }
         break;

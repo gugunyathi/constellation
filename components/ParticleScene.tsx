@@ -88,7 +88,7 @@ const MusicInterfaceSystem: React.FC<ParticleSystemProps> = ({ appState, setAppS
     );
 
     return (
-        <group position={[0, -6, 2]}> {/* Moved buttons down slightly */}
+        <group position={[0, -2, 6]}> {/* Moved back to central position for better visibility */}
             {/* Play/Pause */}
             <MusicButton 
                 id="play"
@@ -444,7 +444,7 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
     
     // MUSIC PLAYER TEMPLATE SPECIFIC LOGIC
     const isMusicShape = shape === ShapeType.MUSIC_PLAYER;
-    const numBars = 16;
+    const numBars = 8; // Updated to 8
     const particlesPerBar = Math.floor(particleCount / numBars);
 
     const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
@@ -483,8 +483,8 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
                      audioLevel += Math.random() * 0.1;
                  } else {
                      // Real Frequency Data - BIN AVERAGING
-                     // Map 16 bars to ~64 bins
-                     const binsPerBar = 4;
+                     // Map 8 bars to ~64 bins
+                     const binsPerBar = 8; // 8 * 8 = 64
                      const startBin = barIndex * binsPerBar;
                      let sum = 0;
                      for(let k=0; k<binsPerBar; k++) {
@@ -498,8 +498,8 @@ const ParticleSystem: React.FC<ParticleSystemProps> = ({ appState, handOpenness,
              }
          }
          
-         // Y Mapping: Scale up from bottom (-4)
-         const baseY = -4;
+         // Y Mapping: Scale up from bottom (-12) to match taller bars
+         const baseY = -12;
          const relativeY = ty - baseY;
          targetY = baseY + (relativeY * eqScale);
 
