@@ -111,7 +111,7 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, isActive }) => 
           // Invert X because webcam is mirrored
           const rotation = Math.atan2(dy, -dx) - (Math.PI / 2); // Normalize so vertical is 0
 
-          // 4. Calculate Velocity
+          // 4. Calculate Velocity & Position
           // Center of palm approx
           const cx = (wrist.x + middleMCP.x) / 2;
           const cy = (wrist.y + middleMCP.y) / 2;
@@ -131,7 +131,8 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, isActive }) => 
               velocity: { x: vx, y: vy },
               pinchDistance: pinchDist,
               rotation: rotation,
-              isPinching: isPinching
+              isPinching: isPinching,
+              position: { x: 1 - cx, y: cy } // Mirror X for screen coordinates (0-1)
           };
           
           onHandUpdate(openness > 0.3, openness, gesture);
@@ -142,7 +143,8 @@ const HandTracker: React.FC<HandTrackerProps> = ({ onHandUpdate, isActive }) => 
                 velocity: { x: 0, y: 0 },
                 pinchDistance: 1,
                 rotation: 0,
-                isPinching: false
+                isPinching: false,
+                position: { x: 0.5, y: 0.5 }
             });
             prevHandCenter.current = null;
         }

@@ -27,6 +27,7 @@ export interface GestureData {
   pinchDistance: number;
   rotation: number;
   isPinching: boolean;
+  position: { x: number, y: number }; // Normalized 0-1 (Screen Coordinates)
 }
 
 export interface SensitivitySettings {

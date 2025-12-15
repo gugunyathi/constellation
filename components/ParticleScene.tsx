@@ -17,6 +17,11 @@ interface GallerySystemProps extends ParticleSystemProps {
   controlsRef: React.MutableRefObject<any>;
 }
 
+// Add controlsRef to MusicInterface as well for disabling rotation during drag
+interface MusicInterfaceProps extends ParticleSystemProps {
+    controlsRef: React.MutableRefObject<any>;
+}
+
 // ----------------------------------------------------------------------
 // VIDEO COMPONENT
 // ----------------------------------------------------------------------
@@ -37,97 +42,221 @@ const VideoPlane = ({ url, opacity }: { url: string, opacity: number }) => {
 };
 
 // ----------------------------------------------------------------------
-// MUSIC INTERFACE SYSTEM (3D BUTTONS)
+// MUSIC INTERFACE SYSTEM (3D BUTTONS & GESTURES)
 // ----------------------------------------------------------------------
-const MusicInterfaceSystem: React.FC<ParticleSystemProps> = ({ appState, setAppState }) => {
+const MusicInterfaceSystem: React.FC<MusicInterfaceProps> = ({ appState, setAppState, gestureData, controlsRef }) => {
     const { isPlaying, currentTrackIndex, audioTracks } = appState;
+    const groupRef = useRef<THREE.Group>(null);
+    const cursorRef = useRef<THREE.Mesh>(null);
+    
+    // Drag & Interaction State
+    const [isDragging, setIsDragging] = useState(false);
+    const dragOffset = useRef(new THREE.Vector3());
     const [hoveredButton, setHoveredButton] = useState<string | null>(null);
-    useCursor(hoveredButton !== null);
+    const wasPinching = useRef(false);
 
-    const handlePlayPause = (e: any) => {
-        e.stopPropagation();
-        setAppState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
-    };
+    // Helpers for raycasting
+    const vec = useMemo(() => new THREE.Vector3(), []);
+    const dir = useMemo(() => new THREE.Vector3(), []);
+    const planeNormal = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+    const planePoint = useMemo(() => new THREE.Vector3(0, 0, 6), []); // Initial Z plane
 
-    const handleNext = (e: any) => {
-        e.stopPropagation();
-        setAppState(prev => ({ 
-            ...prev, 
-            currentTrackIndex: (prev.currentTrackIndex + 1) % prev.audioTracks.length,
-            isPlaying: true
-        }));
-    };
+    useFrame((state) => {
+        if (!groupRef.current) return;
+        
+        const { isPinching, position } = gestureData.current;
+        const currentZ = groupRef.current.position.z;
+        planePoint.set(0, 0, currentZ);
 
-    const handlePrev = (e: any) => {
-        e.stopPropagation();
-        setAppState(prev => ({ 
-            ...prev, 
-            currentTrackIndex: (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length,
-            isPlaying: true
-        }));
+        // 1. Calculate Cursor Position in 3D (Projected onto the plane of the controls)
+        let ndcX, ndcY;
+        
+        if (appState.interactionMode === 'hand') {
+            // Hand mode: use gestureData.position derived from MediaPipe
+            ndcX = (position.x * 2) - 1;
+            ndcY = -(position.y * 2) + 1;
+        } else {
+            // Mouse mode: use R3F pointer
+            ndcX = state.pointer.x;
+            ndcY = state.pointer.y;
+        }
+
+        // Unproject to find world direction
+        vec.set(ndcX, ndcY, 0.5).unproject(state.camera);
+        dir.copy(vec).sub(state.camera.position).normalize();
+        
+        // Ray-Plane Intersection: P = O + tD
+        // t = (PlanePoint - CameraPos) . Normal / (Direction . Normal)
+        const denom = dir.dot(planeNormal);
+        let cursorPos = new THREE.Vector3();
+        
+        if (Math.abs(denom) > 0.0001) {
+            const t = planePoint.clone().sub(state.camera.position).dot(planeNormal) / denom;
+            cursorPos.copy(state.camera.position).add(dir.multiplyScalar(t));
+        }
+
+        // Update Visual Cursor (Only visible in Hand Mode)
+        if (cursorRef.current) {
+            cursorRef.current.position.copy(cursorPos);
+            // Pulse color on pinch
+            (cursorRef.current.material as THREE.MeshBasicMaterial).color.set(isPinching ? "#00ffff" : "#ffffff");
+        }
+
+        // 2. Interaction Logic
+        // Calculate cursor position relative to the group (Local Space)
+        const localCursor = cursorPos.clone().sub(groupRef.current.position);
+        
+        // Define Hit Zones (Local coords)
+        const hitZones = [
+            { id: 'prev', x: -3.5, y: 0, r: 1.5 },
+            { id: 'play', x: 0, y: 0, r: 2.0 },
+            { id: 'next', x: 3.5, y: 0, r: 1.5 }
+        ];
+
+        let foundHover = null;
+        if (!isDragging) {
+            for (const zone of hitZones) {
+                const dx = localCursor.x - zone.x;
+                const dy = localCursor.y - zone.y;
+                if (Math.sqrt(dx*dx + dy*dy) < zone.r) {
+                    foundHover = zone.id;
+                    break;
+                }
+            }
+        }
+        setHoveredButton(foundHover);
+
+        // Disable Orbit Controls if hovering UI or Dragging (Mouse or Hand)
+        if (controlsRef.current) {
+             const isInteracting = foundHover !== null || isDragging;
+             // Only disable if using mouse to prevent orbit while clicking
+             // For hand, orbit is manual via gesture so it matters less, but good practice
+             controlsRef.current.enabled = !isInteracting;
+        }
+
+        // 3. State Machine: Click vs Drag
+        if (isPinching && !wasPinching.current) {
+            // PINCH START
+            if (foundHover) {
+                // Click Action
+                handleButtonClick(foundHover);
+            } else {
+                // Start Dragging Group
+                setIsDragging(true);
+                dragOffset.current.copy(groupRef.current.position).sub(cursorPos);
+            }
+        } else if (!isPinching && wasPinching.current) {
+            // PINCH END
+            setIsDragging(false);
+        }
+
+        if (isDragging && isPinching) {
+            // Update Position
+            const newPos = cursorPos.clone().add(dragOffset.current);
+            // Clamp Z to avoid flying too far (optional)
+            // newPos.z = 6; 
+            groupRef.current.position.copy(newPos);
+        }
+
+        wasPinching.current = isPinching;
+    });
+
+    const handleButtonClick = (id: string) => {
+        if (id === 'play') {
+            setAppState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
+        } else if (id === 'next') {
+            setAppState(prev => ({ 
+                ...prev, 
+                currentTrackIndex: (prev.currentTrackIndex + 1) % prev.audioTracks.length,
+                isPlaying: true
+            }));
+        } else if (id === 'prev') {
+            setAppState(prev => ({ 
+                ...prev, 
+                currentTrackIndex: (prev.currentTrackIndex - 1 + prev.audioTracks.length) % prev.audioTracks.length,
+                isPlaying: true
+            }));
+        }
     };
 
     // Helper to create button
-    const MusicButton = ({ position, text, onClick, id, size = 1, color = "#fff" }: any) => (
-        <group position={position} onClick={onClick} onPointerOver={() => setHoveredButton(id)} onPointerOut={() => setHoveredButton(null)}>
-             {/* Hit Area */}
-             <mesh visible={false}>
-                 <planeGeometry args={[size * 1.5, size * 1.5]} />
-                 <meshBasicMaterial />
-             </mesh>
-             <Text
-                font="https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff"
-                fontSize={size}
-                color={hoveredButton === id ? "#00ffff" : color}
-                anchorX="center"
-                anchorY="middle"
-             >
-                {text}
-             </Text>
-        </group>
-    );
+    const MusicButton = ({ position, text, id, size = 1, color = "#fff" }: any) => {
+        const isHovered = hoveredButton === id;
+        const scale = isHovered ? 1.2 : 1.0;
+        
+        return (
+            <group position={position} scale={[scale, scale, scale]}>
+                 <mesh visible={false}>
+                     <planeGeometry args={[size * 1.5, size * 1.5]} />
+                     <meshBasicMaterial />
+                 </mesh>
+                 <Text
+                    font="https://fonts.gstatic.com/s/inter/v12/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuLyfAZ9hjp-Ek-_EeA.woff"
+                    fontSize={size}
+                    color={isHovered ? "#00ffff" : color}
+                    anchorX="center"
+                    anchorY="middle"
+                 >
+                    {text}
+                 </Text>
+            </group>
+        );
+    };
 
     return (
-        <group position={[0, -2, 6]}> {/* Moved back to central position for better visibility */}
-            {/* Play/Pause */}
-            <MusicButton 
-                id="play"
-                position={[0, 0, 0]} 
-                text={isPlaying ? "❚❚" : "▶"} 
-                size={2.5}
-                onClick={handlePlayPause}
-            />
-            
-            {/* Prev */}
-            <MusicButton 
-                id="prev"
-                position={[-3.5, 0, 0]} 
-                text="⏮" 
-                size={1.5}
-                onClick={handlePrev}
-            />
+        <>
+            <group ref={groupRef} position={[0, -2, 6]}>
+                {/* Play/Pause */}
+                <MusicButton 
+                    id="play"
+                    position={[0, 0, 0]} 
+                    text={isPlaying ? "❚❚" : "▶"} 
+                    size={2.5}
+                />
+                
+                {/* Prev */}
+                <MusicButton 
+                    id="prev"
+                    position={[-3.5, 0, 0]} 
+                    text="⏮" 
+                    size={1.5}
+                />
 
-            {/* Next */}
-            <MusicButton 
-                id="next"
-                position={[3.5, 0, 0]} 
-                text="⏭" 
-                size={1.5}
-                onClick={handleNext}
-            />
+                {/* Next */}
+                <MusicButton 
+                    id="next"
+                    position={[3.5, 0, 0]} 
+                    text="⏭" 
+                    size={1.5}
+                />
 
-            {/* Track Info Floating Text */}
-            <Text
-                position={[0, -2, 0]}
-                fontSize={0.5}
-                color="#ffffff"
-                anchorX="center"
-                maxWidth={10}
-                textAlign="center"
-            >
-                {audioTracks[currentTrackIndex]?.name || "No Track"}
-            </Text>
-        </group>
+                {/* Drag Handle Indicator (Subtle background pill) */}
+                <mesh position={[0, 0, -0.5]}>
+                    <planeGeometry args={[10, 4]} />
+                    <meshBasicMaterial color="black" transparent opacity={isDragging ? 0.4 : 0.0} />
+                </mesh>
+
+                {/* Track Info Floating Text */}
+                <Text
+                    position={[0, -2, 0]}
+                    fontSize={0.5}
+                    color="#ffffff"
+                    anchorX="center"
+                    maxWidth={10}
+                    textAlign="center"
+                >
+                    {audioTracks[currentTrackIndex]?.name || "No Track"}
+                </Text>
+            </group>
+
+            {/* Virtual Cursor (Hand Mode Only) */}
+            {appState.interactionMode === 'hand' && (
+                <mesh ref={cursorRef}>
+                    <sphereGeometry args={[0.2, 16, 16]} />
+                    <meshBasicMaterial color="white" transparent opacity={0.6} depthTest={false} />
+                </mesh>
+            )}
+        </>
     );
 };
 
@@ -564,6 +693,7 @@ const ParticleScene: React.FC<ParticleSystemProps> = ({ appState, setAppState, h
                 handOpenness={handOpenness}
                 gestureData={gestureData}
                 analyserRef={analyserRef}
+                controlsRef={controlsRef}
             />
         )}
 

@@ -53,7 +53,8 @@ const App: React.FC = () => {
     velocity: { x: 0, y: 0 },
     pinchDistance: 0,
     rotation: 0,
-    isPinching: false
+    isPinching: false,
+    position: { x: 0.5, y: 0.5 }
   });
 
   // Wave Detection Refs
@@ -132,7 +133,8 @@ const App: React.FC = () => {
             velocity: { x: vx * 20, y: vy * 20 }, 
             rotation: (e.clientX / window.innerWidth - 0.5) * 1.0, // Tilt based on X position
             pinchDistance: e.buttons === 1 ? 0.0 : 1.0, // Click simulates pinch (0 distance)
-            isPinching: e.buttons === 1
+            isPinching: e.buttons === 1,
+            position: { x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight }
         };
       }
     };
@@ -186,8 +188,8 @@ const App: React.FC = () => {
                 <>
                   <p className="text-blue-300">Air Music Control</p>
                   <p className="text-xs mt-1 opacity-70">
-                    Open Palm: Play • Fist: Pause • Swipe Right: Next • Swipe Left: Prev<br/>
-                    Twist: Seek • Pinch & Throw: Remove Song • Wave: Toggle UI
+                    Pinch & Drag to move controls • Pinch buttons to click<br/>
+                    Swipe to skip • Open Palm: Play • Fist: Pause
                   </p>
                 </>
             ) : appState.controlMode === 'particles' ? (
